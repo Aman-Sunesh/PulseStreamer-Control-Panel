@@ -1,247 +1,133 @@
-import tkinter as tk
-from tkinter import ttk, messagebox
-from pulsestreamer import PulseStreamer, findPulseStreamers, OutputState
-import threading
 import time
+import threading
+from pulsestreamer import PulseStreamer, findPulseStreamers, OutputState
 
-# Constants for testing
-DIGITAL_TEST_DURATION = 1000  # in nanoseconds
-ANALOG_TEST_VOLTAGE = 0.5     # in Volts
-ANALOG_TEST_DURATION = 1000   # in nanoseconds
 
-class PulseStreamerTester:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Pulse Streamer Pin Tester")
-        self.ps = None  # PulseStreamer instance
+def find_and_connect():
+    try:
+        ps = PulseStreamer('169.254.8.2')
+        print(f"Connected to Pulse Streamer at {'169.254.8.2'}")
+        return ps
+    
+    except Exception as e:
+        print(f"Failed to connect to the Pulse Streamer at {'169.254.8.2'}.\nError: {e}")
+        return None
+    
+def populate_channels(ps):
+    num_digital = 8
+    num_analog = 2
 
-        # Device Selection Frame
-        device_frame = ttk.LabelFrame(root, text="Select Pulse Streamer Device")
-        device_frame.pack(fill="x", padx=10, pady=5)
+    digital_channels = list(range(num_digital))
+    analog_channels = list(range(num_analog))
 
-        ttk.Label(device_frame, text="Available Devices:").pack(side="left", padx=5, pady=5)
-        self.device_var = tk.StringVar()
-        self.device_dropdown = ttk.Combobox(device_frame, textvariable=self.device_var, state="readonly", width=50)
-        self.device_dropdown.pack(side="left", padx=5, pady=5)
+    print("\nDigital Channels:", digital_channels)
+    print("Analog Channels:", analog_channels)
 
-        refresh_button = ttk.Button(device_frame, text="Refresh Devices", command=self.refresh_devices)
-        refresh_button.pack(side="left", padx=5, pady=5)
+    return digital_channels, analog_channels
 
-        connect_button = ttk.Button(device_frame, text="Connect", command=self.connect_device)
-        connect_button.pack(side="left", padx=5, pady=5)
 
-        # Testing Parameters Frame
-        params_frame = ttk.LabelFrame(root, text="Testing Parameters")
-        params_frame.pack(fill="x", padx=10, pady=5)
+def test_one_channel(ps, choice, channels):
+    if choice.lower() == 'd':
+        ch = int(input("Enter channel no.: "))
 
-        ttk.Label(params_frame, text="Digital Pulse Duration (ns):").grid(row=0, column=0, padx=5, pady=5, sticky="e")
-        self.digital_duration_var = tk.IntVar(value=DIGITAL_TEST_DURATION)
-        self.digital_duration_entry = ttk.Entry(params_frame, textvariable=self.digital_duration_var, width=10)
-        self.digital_duration_entry.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        if ch in channels:
+            patt = [(10000,1),(10000,0)]   # Can be changed according to need
+            patt.append(patt[0])
 
-        ttk.Label(params_frame, text="Analog Test Voltage (V):").grid(row=1, column=0, padx=5, pady=5, sticky="e")
-        self.analog_voltage_var = tk.DoubleVar(value=ANALOG_TEST_VOLTAGE)
-        self.analog_voltage_entry = ttk.Entry(params_frame, textvariable=self.analog_voltage_var, width=10)
-        self.analog_voltage_entry.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+            # Define the number of pulses (each pulse consists of a high and a low state)
+            num_pulses = 100  # Adjust this number as needed
+            
+            for _ in range(num_pulses):
+                patt.append(patt[0])
+                patt.append(patt[1])
 
-        ttk.Label(params_frame, text="Analog Pulse Duration (ns):").grid(row=2, column=0, padx=5, pady=5, sticky="e")
-        self.analog_duration_var = tk.IntVar(value=ANALOG_TEST_DURATION)
-        self.analog_duration_entry = ttk.Entry(params_frame, textvariable=self.analog_duration_var, width=10)
-        self.analog_duration_entry.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+            ''''print("Enter the duration and state for each pulse (e.g., 1000 for duration and 1 for state): ")
 
-        # Channel Status Frame
-        status_frame = ttk.LabelFrame(root, text="Channel Status")
-        status_frame.pack(fill="both", expand=True, padx=10, pady=5)
+            for i in range(n):
+                duration, state = map(int, input(f"Pulse {i+1}: ").split())
+                patt.append((duration, state))'''
 
-        # Digital Channels
-        digital_frame = ttk.LabelFrame(status_frame, text="Digital Channels")
-        digital_frame.pack(fill="both", expand=True, side="left", padx=5, pady=5)
+            seq = ps.createSequence()
+            seq.setDigital([ch], patt)
 
-        self.digital_channels = []
-        self.digital_labels = {}
-
-        # Analog Channels
-        analog_frame = ttk.LabelFrame(status_frame, text="Analog Channels")
-        analog_frame.pack(fill="both", expand=True, side="right", padx=5, pady=5)
-
-        self.analog_channels = []
-        self.analog_labels = {}
-
-        # Control Buttons Frame
-        control_frame = ttk.Frame(root)
-        control_frame.pack(fill="x", padx=10, pady=5)
-
-        test_digital_btn = ttk.Button(control_frame, text="Test Digital Channels", command=self.test_digital_channels)
-        test_digital_btn.pack(side="left", padx=5, pady=5)
-
-        test_analog_btn = ttk.Button(control_frame, text="Test Analog Channels", command=self.test_analog_channels)
-        test_analog_btn.pack(side="left", padx=5, pady=5)
-
-        test_all_btn = ttk.Button(control_frame, text="Test All Channels", command=self.test_all_channels)
-        test_all_btn.pack(side="left", padx=5, pady=5)
-
-        # Initialize by refreshing devices
-        self.refresh_devices()
-
-    def refresh_devices(self):
-        devices = findPulseStreamers()
-        device_list = []
-        for dev in devices:
-            info = f"{dev.hostname} ({dev.ip}) - Serial: {dev.serial}"
-            device_list.append(info)
-        self.device_dropdown['values'] = device_list
-        if device_list:
-            self.device_dropdown.current(0)
-        else:
-            self.device_dropdown.set("No devices found")
-
-    def connect_device(self):
-        selected = self.device_var.get()
-        if not selected or selected == "No devices found":
-            messagebox.showerror("Connection Error", "No Pulse Streamer device selected or found.")
-            return
-        # Extract IP from selected string
-        try:
-            ip = selected.split('(')[1].split(')')[0]
-        except IndexError:
-            messagebox.showerror("Parsing Error", "Failed to parse the device IP address.")
-            return
-        try:
-            self.ps = PulseStreamer(ip)
-            messagebox.showinfo("Connection Successful", f"Connected to Pulse Streamer at {ip}")
-            self.populate_channels()
-        except Exception as e:
-            messagebox.showerror("Connection Error", f"Failed to connect to Pulse Streamer at {ip}.\nError: {e}")
-
-    def populate_channels(self):
-        if not self.ps:
-            return
-        # Reset existing channels
-        for label in self.digital_labels.values():
-            label.destroy()
-        for label in self.analog_labels.values():
-            label.destroy()
-        self.digital_channels = []
-        self.analog_channels = []
-        self.digital_labels = {}
-        self.analog_labels = {}
-
-        # Assuming Pulse Streamer 8/2 has 8 digital and 2 analog channels
-        # Adjust based on actual hardware
-        num_digital = 8
-        num_analog = 2
-
-        digital_frame = self.root.nametowidget('.!labelframe2.!labelframe')
-        analog_frame = self.root.nametowidget('.!labelframe2.!labelframe2')
-
-        for ch in range(num_digital):
-            self.digital_channels.append(ch)
-            lbl = ttk.Label(digital_frame, text=f"Channel {ch}", background="red", width=20)
-            lbl.pack(padx=5, pady=2)
-            self.digital_labels[ch] = lbl
-
-        for ch in range(num_analog):
-            self.analog_channels.append(ch)
-            lbl = ttk.Label(analog_frame, text=f"Analog {ch}", background="red", width=20)
-            lbl.pack(padx=5, pady=2)
-            self.analog_labels[ch] = lbl
-
-    def test_digital_channels(self):
-        if not self.ps:
-            messagebox.showerror("Error", "No Pulse Streamer connected.")
-            return
-        threading.Thread(target=self._test_digital_channels_thread, daemon=True).start()
-
-    def _test_digital_channels_thread(self):
-        for ch in self.digital_channels:
             try:
-                self.update_label(self.digital_labels[ch], "Testing...", "yellow")
-                # Create a sequence to set the channel high, wait, then low
-                seq = self.ps.createSequence()
-                # Define the pulse pattern: High for DIGITAL_TEST_DURATION ns, then Low
-                pulse_patt = [(self.digital_duration_var.get(), 1), (self.digital_duration_var.get(), 0)]
-                seq.setDigital([ch], pulse_patt)
-                # Stream the sequence once
-                self.ps.stream(seq, n_runs=1, final=OutputState.ZERO)
-                # Allow some time for the pulse to be sent
-                time.sleep(self.digital_duration_var.get() * 1e-6 * 2)  # Convert ns to seconds
-                self.update_label(self.digital_labels[ch], "Tested", "green")
+                # Stream indefinitely
+                ps.stream(seq, n_runs=999999999) 
+                print("Digital Channel Test: Streaming indefinitely...")
+                input("Press ENTER to stop streaming.")
+
+                ps.forceFinal()
+                print("Stopped digital channel streaming")
+
             except Exception as e:
-                self.update_label(self.digital_labels[ch], "Error", "red")
-                messagebox.showerror("Digital Channel Test Error", f"Channel {ch} failed.\nError: {e}")
+                print(f"Error streaming to digital channel: {e}")
+                
 
-    def test_analog_channels(self):
-        if not self.ps:
-            messagebox.showerror("Error", "No Pulse Streamer connected.")
-            return
-        threading.Thread(target=self._test_analog_channels_thread, daemon=True).start()
+    elif choice.lower() == 'a':
+        ch = int(input("Enter channel no.: "))
 
-    def _test_analog_channels_thread(self):
-        for ch in self.analog_channels:
+        if ch in channels:
+            duration_high = 1000  # duration in nanoseconds
+            voltage_high = 0.5    # high voltage level
+            voltage_low = -0.5    # low voltage level
+
+            # Define the number of pulses (each pulse consists of a high and a low state)
+            num_pulses = 100  # Adjust this number as needed
+
+            patt = []
+            for _ in range(num_pulses): # As in th digital case, pattern can be adjusted as needed
+                patt.append((duration_high, voltage_high))  # High state
+                patt.append((duration_high, voltage_low))   # Low state
+
+            seq = ps.createSequence()
+            seq.setAnalog([ch], patt)
+
             try:
-                self.update_label(self.analog_labels[ch], "Testing...", "yellow")
-                # Create a sequence to set the analog channel to ANALOG_TEST_VOLTAGE, wait, then reset to 0V
-                seq = self.ps.createSequence()
-                analog_patt = [
-                    (self.analog_duration_var.get(), self.analog_voltage_var.get()),
-                    (self.analog_duration_var.get(), 0.0)
-                ]
-                seq.setAnalog([ch], analog_patt)
-                # Stream the sequence once
-                self.ps.stream(seq, n_runs=1, final=OutputState.ZERO)
-                # Allow some time for the pulse to be sent
-                time.sleep(self.analog_duration_var.get() * 1e-6 * 2)  # Convert ns to seconds
-                self.update_label(self.analog_labels[ch], "Tested", "green")
+                # Stream indefinitely
+                ps.stream(seq, n_runs=999999999)
+                print("Analog Channel Test: Streaming indefinitely...")
+                input("Press ENTER to stop streaming.")
+
+                ps.forceFinal()  
+                print("Stopped analog channel streaming.")
+
             except Exception as e:
-                self.update_label(self.analog_labels[ch], "Error", "red")
-                messagebox.showerror("Analog Channel Test Error", f"Analog Channel {ch} failed.\nError: {e}")
+                print(f"Error streaming to analog channel: {e}")
 
-    def test_all_channels(self):
-        if not self.ps:
-            messagebox.showerror("Error", "No Pulse Streamer connected.")
-            return
-        threading.Thread(target=self._test_all_channels_thread, daemon=True).start()
 
-    def _test_all_channels_thread(self):
-        # Test Digital Channels
-        for ch in self.digital_channels:
-            try:
-                self.update_label(self.digital_labels[ch], "Testing...", "yellow")
-                seq = self.ps.createSequence()
-                pulse_patt = [(self.digital_duration_var.get(), 1), (self.digital_duration_var.get(), 0)]
-                seq.setDigital([ch], pulse_patt)
-                self.ps.stream(seq, n_runs=1, final=OutputState.ZERO)
-                time.sleep(self.digital_duration_var.get() * 1e-6 * 2)
-                self.update_label(self.digital_labels[ch], "Tested", "green")
-            except Exception as e:
-                self.update_label(self.digital_labels[ch], "Error", "red")
-                messagebox.showerror("Digital Channel Test Error", f"Channel {ch} failed.\nError: {e}")
-
-        # Test Analog Channels
-        for ch in self.analog_channels:
-            try:
-                self.update_label(self.analog_labels[ch], "Testing...", "yellow")
-                seq = self.ps.createSequence()
-                analog_patt = [
-                    (self.analog_duration_var.get(), self.analog_voltage_var.get()),
-                    (self.analog_duration_var.get(), 0.0)
-                ]
-                seq.setAnalog([ch], analog_patt)
-                self.ps.stream(seq, n_runs=1, final=OutputState.ZERO)
-                time.sleep(self.analog_duration_var.get() * 1e-6 * 2)
-                self.update_label(self.analog_labels[ch], "Tested", "green")
-            except Exception as e:
-                self.update_label(self.analog_labels[ch], "Error", "red")
-                messagebox.showerror("Analog Channel Test Error", f"Analog Channel {ch} failed.\nError: {e}")
-
-    def update_label(self, label, text, color):
-        label.config(text=text, background=color)
-        self.root.update_idletasks()
 
 def main():
-    root = tk.Tk()
-    app = PulseStreamerTester(root)
-    root.mainloop()
+    print("=== Pulse Streamer Pin Tester ===\n")
+    ps = find_and_connect()
+    if not ps:
+        return
+
+    digital_channels, analog_channels = populate_channels(ps)
+
+    while True:
+        print("\nSelect Test Option:")
+        print("1. Test a Specific Channel")
+        print("2. Exit")
+
+        choice = input("Enter your choice [1-2]: ")
+
+        if choice == '1':
+            print("\nDigital Channels:", digital_channels)
+            print("Analog Channels:", analog_channels)
+
+            choice = input("Do you want to test a digital channel or an analog channel (D/A): ")
+
+            if choice.lower() == 'd':
+                test_one_channel(ps, choice, digital_channels)
+            elif choice.lower() == 'a':
+                test_one_channel(ps, choice, analog_channels)
+
+        elif choice == '2':
+            print("Exiting Pulse Streamer Pin Tester.")
+            break
+
+        else:
+            print("Invalid choice. Please select a valid option.")
 
 if __name__ == "__main__":
     main()
