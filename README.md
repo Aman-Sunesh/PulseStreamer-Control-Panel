@@ -93,5 +93,5 @@ Modify the signal patterns directly in the GUI or edit the script to preset patt
 
 ## Acknowledgments
 
-- [Swabian Instruments Documentation](https://www.swabianinstruments.com/pulse-streamer-8-2/doc/)
+- [Swabian Instruments Documentation](https://www.swabianinstruments.com)
 - Python Community: For providing extensive libraries and tools.
